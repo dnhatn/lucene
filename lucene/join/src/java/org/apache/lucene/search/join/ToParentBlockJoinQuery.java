@@ -243,37 +243,6 @@ public class ToParentBlockJoinQuery extends Query {
     }
   }
 
-  private static class ParentTwoPhase extends TwoPhaseIterator {
-
-    private final ParentApproximation parentApproximation;
-    private final DocIdSetIterator childApproximation;
-    private final TwoPhaseIterator childTwoPhase;
-
-    ParentTwoPhase(ParentApproximation parentApproximation, TwoPhaseIterator childTwoPhase) {
-      super(parentApproximation);
-      this.parentApproximation = parentApproximation;
-      this.childApproximation = childTwoPhase.approximation();
-      this.childTwoPhase = childTwoPhase;
-    }
-
-    @Override
-    public boolean matches() throws IOException {
-      assert childApproximation.docID() < parentApproximation.docID();
-      do {
-        if (childTwoPhase.matches()) {
-          return true;
-        }
-      } while (childApproximation.nextDoc() < parentApproximation.docID());
-      return false;
-    }
-
-    @Override
-    public float matchCost() {
-      // TODO: how could we compute a match cost?
-      return childTwoPhase.matchCost() + 10;
-    }
-  }
-
   static class BlockJoinScorer extends Scorer {
     private final Scorer childScorer;
     private final BitSet parentBits;
@@ -283,6 +252,7 @@ public class ToParentBlockJoinQuery extends Query {
     private final ParentApproximation parentApproximation;
     private final ParentTwoPhase parentTwoPhase;
     private float score;
+    private int freq;
 
     public BlockJoinScorer(
         Weight weight, Scorer childScorer, BitSet parentBits, ScoreMode scoreMode) {
@@ -390,6 +360,7 @@ public class ToParentBlockJoinQuery extends Query {
       if (scoreMode == ScoreMode.Avg) {
         score /= freq;
       }
+      this.freq = freq;
       this.score = (float) score;
     }
 
@@ -421,6 +392,39 @@ public class ToParentBlockJoinQuery extends Query {
               start,
               end),
           bestChild);
+    }
+
+    private class ParentTwoPhase extends TwoPhaseIterator {
+
+      private final ParentApproximation parentApproximation;
+      private final DocIdSetIterator childApproximation;
+      private final TwoPhaseIterator childTwoPhase;
+
+      ParentTwoPhase(ParentApproximation parentApproximation, TwoPhaseIterator childTwoPhase) {
+        super(parentApproximation);
+        this.parentApproximation = parentApproximation;
+        this.childApproximation = childTwoPhase.approximation();
+        this.childTwoPhase = childTwoPhase;
+      }
+
+      @Override
+      public boolean matches() throws IOException {
+        if (childApproximation.docID() >= parentApproximation.docID()) {
+          return freq > 1;
+        }
+        do {
+          if (childTwoPhase.matches()) {
+            return true;
+          }
+        } while (childApproximation.nextDoc() < parentApproximation.docID());
+        return false;
+      }
+
+      @Override
+      public float matchCost() {
+        // TODO: how could we compute a match cost?
+        return childTwoPhase.matchCost() + 10;
+      }
     }
   }
 
